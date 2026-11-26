@@ -234,7 +234,7 @@ test('prepareAuditRow: E06 spam (other branch) -> logged_only, empty draft, no h
   assert.strictEqual(row.email_id, 'E06');
   assert.strictEqual(row.secondary_intent, '');
   assert.strictEqual(row.processed_at, AT);
-  assert.strictEqual(row.prompt_version, 'v1');
+  assert.strictEqual(row.prompt_version, 'v2');
 });
 
 test('prepareAuditRow: E07 UNAUTHORIZED in intermediateSteps -> order_found false, needs_human, privacy action', () => {
@@ -405,12 +405,13 @@ test('n8n entry: prepare_audit_row handles agent branch and other branch', () =>
   const fn = new Function('$input', '$', src);
   const cls = classify('E01');
   const other = classify('E06', { intent: 'other', confidence: 0.98 });
-  const $ = () => ({ itemMatching: () => ({ json: cls }) });
+  const mk$ = (c) => () => ({ first: () => ({ json: c }), itemMatching: () => ({ json: c }) });
+  const $ = mk$(cls);
   const agentRow = fn({ all: () => [{ json: { output: REPLY, intermediateSteps: [step('get_order', 'KC-1041', lookup('E01', 'KC-1041'))] } }] }, $)[0].json;
   assert.strictEqual(agentRow.email_id, 'E01');
   assert.strictEqual(agentRow.order_found, true);
   assert.strictEqual(agentRow.action_taken, 'drafted_reply');
-  const otherRow = fn({ all: () => [{ json: other }] }, $)[0].json;
+  const otherRow = fn({ all: () => [{ json: other }] }, mk$(other))[0].json;
   assert.strictEqual(otherRow.email_id, 'E06');
   assert.strictEqual(otherRow.action_taken, 'logged_only');
 });

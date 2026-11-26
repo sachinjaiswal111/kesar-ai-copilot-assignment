@@ -121,14 +121,17 @@ if (typeof module !== 'undefined' && module.exports) {
 if (typeof query !== 'undefined') {
   return (async () => {
     // Trusted context from the workflow, never from the LLM.
+    // Primary: Validate Classification. Fallback: Normalize Email (same from_email / received_at).
     let ctx = {};
-    try {
-      ctx = $('Validate Classification').first().json;
-    } catch (e) {
+    for (const node of ['Validate Classification', 'Normalize Email']) {
       try {
-        ctx = $('Validate Classification').item.json;
-      } catch (e2) {
-        ctx = {};
+        const j = $(node).first().json;
+        if (j && j.from_email) {
+          ctx = j;
+          break;
+        }
+      } catch (e) {
+        // node not available; try the next one
       }
     }
 

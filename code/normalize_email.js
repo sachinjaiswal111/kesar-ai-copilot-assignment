@@ -13,7 +13,7 @@
  * received_at is preserved verbatim. We never substitute the system clock.
  */
 
-const PROMPT_VERSION = 'v1';
+const PROMPT_VERSION = 'v2';
 
 // Rule name -> regex. Deliberately simple and explainable; flags only raise
 // needs_human, they never auto-reject an email.
@@ -56,7 +56,8 @@ function normalizeAttachments(a) {
     .filter(Boolean);
 }
 
-function normalizeEmail(rawItem) {
+function normalizeEmail(rawItem, options) {
+  const promptVersion = (options && options.promptVersion) || PROMPT_VERSION;
   // n8n Webhook node wraps the POST JSON in `.body`; accept a flat email too.
   const raw = rawItem && typeof rawItem === 'object' ? rawItem : {};
   const e = raw.body && typeof raw.body === 'object' && !Array.isArray(raw.body) ? raw.body : raw;
@@ -78,7 +79,7 @@ function normalizeEmail(rawItem) {
     attachments,
     has_attachments: attachments.length > 0,
     heuristic_injection_flags: detectInjectionHeuristics(`${subject}\n${body}`),
-    prompt_version: PROMPT_VERSION,
+    prompt_version: promptVersion,
   };
 }
 

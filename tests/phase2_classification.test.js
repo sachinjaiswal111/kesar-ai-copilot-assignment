@@ -49,7 +49,8 @@ test('normalize: flat email (E01)', () => {
   assert.deepStrictEqual(n.attachments, []);
   assert.strictEqual(n.has_attachments, false);
   assert.deepStrictEqual(n.heuristic_injection_flags, []);
-  assert.strictEqual(n.prompt_version, 'v1');
+  assert.strictEqual(n.prompt_version, 'v2');
+  assert.strictEqual(normalizeEmail(byId('E01'), { promptVersion: 'v9' }).prompt_version, 'v9');
 });
 
 test('normalize: n8n webhook shape { body: email } equals flat shape', () => {

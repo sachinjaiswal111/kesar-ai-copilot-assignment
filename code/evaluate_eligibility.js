@@ -1,3 +1,12 @@
+'use strict';
+/**
+ * evaluate_eligibility.js (v2)
+ *
+ * Deterministic return/refund eligibility from faq.md rules (section 4 + 5), computed from the
+ * email's received_at (never the system clock). Ownership check: sender must equal order.customer_email.
+ * Paste into the n8n Code node named "Evaluate Eligibility" (Run Once for All Items).
+ */
+
 const ORDERS_URL =
   'https://raw.githubusercontent.com/abhishek-patel-cadient/kesar-ai-copilot-assignment/refs/heads/main/data/orders.json';
 
@@ -27,21 +36,23 @@ function computeDeliveryElapsed(deliveredDate, receivedAt) {
   return { days_since_delivery: days, hours_since_delivery: hours };
 }
 
+const DAMAGED_RE =
+  /\b(damaged|cracked|broken|leaked|leaking|leaks?|spilled|spill|wrong item|wrong product|instead of|missing|not in the box|only had|only the)\b/i;
+const MISSING_RE = /\b(missing|not in the box|only had|was not included|didn'?t receive)\b/i;
+
+// Case type is driven by what the customer describes, not by the classifier label alone:
+// a complaint about "no results" after use is a standard return, not a damaged-item claim.
 function detectCaseType(intent, text) {
-  const t = (text || '').toLowerCase();
-  const damagedPattern =
-    /\b(damaged|cracked|broken|leaked|leaking|spilled|spill|wrong item|wrong product|instead of|missing|not in the box|only had)\b/i;
-  if (intent === 'complaint' || damagedPattern.test(t)) {
-    return 'damaged_wrong_missing';
-  }
-  return 'standard_return';
+  return DAMAGED_RE.test(String(text || '')) ? 'damaged_wrong_missing' : 'standard_return';
 }
 
 function detectOpenedOrUsed(text) {
-  const t = (text || '').toLowerCase();
-  const explicitlyUnopened = /\b(unopened|never opened|not opened|still sealed|seals? intact)\b/i.test(t);
+  let t = String(text || '').toLowerCase().replace(/[’‘]/g, "'");
+  const explicitlyUnopened = /\b(unopened|never opened|not opened|haven'?t opened|still sealed|seals? (?:are |is )?intact|sealed)\b/i.test(t);
+  // Drop negated usage ("never used", "not used", "unused") so they don't read as used.
+  t = t.replace(/\b(?:never|not|haven'?t|hasn'?t|have not|has not|wasn'?t|was not)\s+(?:been\s+)?(?:used|opened|applied|tried)\b/g, ' ').replace(/\bunused\b/g, ' ');
   const usedSignals =
-    /\b(used|using|didn'?t suit|did not suit|no difference|applied|tried it|tried them|for two weeks|for a few days)\b/i.test(t);
+    /\b(used|using|didn'?t suit|did not suit|no difference|applied|tried it|tried them|for two weeks|for a few days|no results?)\b/i.test(t);
   if (usedSignals) return true;
   if (explicitlyUnopened) return false;
   return /\bopened\b/i.test(t);
@@ -126,6 +137,7 @@ function evaluateEligibility({ emailData, orders }) {
   let nonRefundableFees = null;
   let requiresPhotos = false;
   let ticketPriority = 'Medium';
+  let isMissing = false;
 
   if (matched.status !== 'delivered' || !matched.delivered_date) {
     eligible = false;
@@ -133,11 +145,11 @@ function evaluateEligibility({ emailData, orders }) {
     ticketPriority = caseType === 'damaged_wrong_missing' || isAngry ? 'High' : 'Medium';
   } else if (caseType === 'damaged_wrong_missing') {
     requiresPhotos = true;
-    const within48h =
-      (elapsed.hours_since_delivery !== null && elapsed.hours_since_delivery <= 48) ||
-      (elapsed.days_since_delivery !== null && elapsed.days_since_delivery <= 2);
+    const within48h = elapsed.hours_since_delivery !== null && elapsed.hours_since_delivery <= 48;
     eligible = within48h;
-    refundableAmount = matched.total;
+    isMissing = MISSING_RE.test(combinedText);
+    // FAQ 5: missing item -> ship it or refund ITS value only; the order total is not the refund.
+    refundableAmount = isMissing ? null : matched.total;
     nonRefundableFees = 0;
     ticketPriority = 'High';
     if (within48h) {
@@ -200,6 +212,9 @@ function evaluateEligibility({ emailData, orders }) {
       payment_method: paymentMethod,
       refund_method_note: refundMethodNote,
       kit_rule_note: kitRuleNote,
+      missing_item_note: isMissing
+        ? 'Missing item: refund covers only the missing item value (FAQ 5), not the order total. Do not quote an amount; the team confirms it.'
+        : null,
       ticket_priority: ticketPriority,
       needs_human_from_eligibility: needsHuman,
     },
@@ -207,21 +222,31 @@ function evaluateEligibility({ emailData, orders }) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { evaluateEligibility, computeDeliveryElapsed, detectCaseType, detectOpenedOrUsed };
+  module.exports = { evaluateEligibility, computeDeliveryElapsed, detectCaseType, detectOpenedOrUsed, ORDERS_URL };
 }
 
+// ---- n8n Code node entry (Run Once for All Items). Ignored under Node tests. ----
 if (typeof $input !== 'undefined') {
   return (async () => {
     let raw;
-    if (typeof this !== 'undefined' && this.helpers && typeof this.helpers.httpRequest === 'function') {
-      raw = await this.helpers.httpRequest({ method: 'GET', url: ORDERS_URL });
+    if (typeof this !== 'undefined' && this && this.helpers && typeof this.helpers.httpRequest === 'function') {
+      raw = await this.helpers.httpRequest({ method: 'GET', url: ORDERS_URL, json: true });
     } else {
-      const resp = await fetch(ORDERS_URL);
-      raw = await resp.text();
+      raw = await (await fetch(ORDERS_URL)).json();
     }
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw && raw.body ? JSON.parse(raw.body) : raw;
-    const orders = parsed.orders || [];
-    const emailData = $input.first().json;
+    if (typeof raw === 'string') raw = JSON.parse(raw);
+    if (raw && typeof raw.body === 'string') raw = JSON.parse(raw.body);
+    else if (raw && raw.body && !raw.orders) raw = raw.body;
+    const orders = Array.isArray(raw) ? raw : (raw && raw.orders) || [];
+
+    let emailData = $input.first().json;
+    if (!emailData || !emailData.from_email) {
+      try {
+        emailData = $('Validate Classification').first().json;
+      } catch (e) {
+        emailData = emailData || {};
+      }
+    }
     return [{ json: evaluateEligibility({ emailData, orders }) }];
   })();
 }

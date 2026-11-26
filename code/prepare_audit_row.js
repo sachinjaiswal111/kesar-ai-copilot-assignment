@@ -19,6 +19,39 @@ function tryParse(v) {
   }
 }
 
+/**
+ * n8n's AI Agent wraps Custom Code Tool results: the observation can be
+ *   '[{"response":"{\"status\":\"FOUND\",...}"}]', {response:"..."}, or a plain JSON string.
+ * Peel those layers (max depth 6) and return the parsed tool payload, or null if none is parseable.
+ */
+function unwrapObservation(val, depth = 0) {
+  if (val === null || val === undefined || depth > 6) return null;
+  if (typeof val === 'string') {
+    const t = val.trim();
+    if (!t) return null;
+    const parsed = tryParse(t);
+    return parsed === null ? null : unwrapObservation(parsed, depth + 1);
+  }
+  if (Array.isArray(val)) {
+    for (const el of val) {
+      const u = unwrapObservation(el, depth + 1);
+      if (u) return u;
+    }
+    return null;
+  }
+  if (typeof val === 'object') {
+    if (val.status !== undefined || val.found !== undefined) return val; // already the tool payload
+    for (const k of ['response', 'output', 'text', 'result']) {
+      if (val[k] !== undefined) {
+        const u = unwrapObservation(val[k], depth + 1);
+        if (u) return u;
+      }
+    }
+    return val;
+  }
+  return null;
+}
+
 function extractAgentText(agentOutput) {
   if (agentOutput === null || agentOutput === undefined) return { text: '', error: '' };
   if (Array.isArray(agentOutput)) return extractAgentText(agentOutput[0]);
@@ -67,7 +100,7 @@ function inspectSteps(steps) {
   for (const step of steps) {
     const tool = s((step && step.action && (step.action.tool || step.action.toolName)) || (step && (step.tool || step.name)));
     const obsRaw = step && (step.observation !== undefined ? step.observation : step.output);
-    const obs = tryParse(typeof obsRaw === 'string' ? obsRaw : obsRaw === undefined ? null : obsRaw);
+    const obs = unwrapObservation(obsRaw);
     if (tool === 'get_order') {
       r.get_order_called = true;
       const st = obs && obs.status;
@@ -169,33 +202,37 @@ function prepareAuditRow({ classification, agentOutput, intermediateSteps, ticke
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { prepareAuditRow, extractAgentText, splitReplyAndMeta, inspectSteps, COLUMNS, META_DELIMITER };
+  module.exports = { prepareAuditRow, unwrapObservation, extractAgentText, splitReplyAndMeta, inspectSteps, COLUMNS, META_DELIMITER };
 }
 
+// ---- n8n Code node entry (Run Once for All Items). Ignored under Node tests. ----
 if (typeof $input !== 'undefined') {
-  return $input.all().map((item, i) => {
+  return $input.all().map((item) => {
     const j = item.json || {};
     const fromAgent = j.output !== undefined || j.intermediateSteps !== undefined || (j.error !== undefined && j.intent === undefined);
-    let classification = j;
-    if (fromAgent) {
-      try {
-        classification = $('Validate Classification').itemMatching(i).json;
-      } catch (e) {
-        try {
-          classification = $('Validate Classification').first().json;
-        } catch (e2) {
-          classification = {};
-        }
-      }
+
+    // ALWAYS take the classification from Validate Classification so email_id / from_email /
+    // prompt_version survive even when the agent errored. Fall back to the incoming item.
+    let classification = null;
+    try {
+      classification = $('Validate Classification').first().json;
+    } catch (e) {
+      classification = null;
     }
+    if (!classification || !classification.email_id) classification = fromAgent ? classification || {} : j;
+
     let eligibility = null;
     let ticketId = j.ticket_id || j.ticketId || '';
     try {
       if ($('Evaluate Eligibility').isExecuted) eligibility = $('Evaluate Eligibility').first().json.eligibility || null;
-    } catch (e) {}
+    } catch (e) {
+      // not on this branch
+    }
     try {
       if ($('Prepare Ticket Action').isExecuted) ticketId = $('Prepare Ticket Action').first().json.ticket_id || ticketId;
-    } catch (e) {}
+    } catch (e) {
+      // not on this branch
+    }
     return {
       json: prepareAuditRow({
         classification,

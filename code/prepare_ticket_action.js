@@ -1,3 +1,12 @@
+'use strict';
+/**
+ * prepare_ticket_action.js (v2)
+ *
+ * Dedupe rule: an existing ticket with the same order_id and status != Closed is UPDATED
+ * (email_ids merged idempotently, priority only escalates upward); otherwise a new TKT-### is created.
+ * Paste into the n8n Code node "Prepare Ticket Action" (input = rows from the Tickets sheet read).
+ */
+
 const PRIORITY_RANK = { Low: 1, Medium: 2, High: 3 };
 
 function higherPriority(a, b) {
@@ -102,8 +111,17 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { prepareTicketAction, nextTicketId, mergeEmailIds };
 }
 
+// ---- n8n Code node entry (Run Once for All Items). Ignored under Node tests. ----
 if (typeof $input !== 'undefined') {
-  const existingTickets = $input.all().map((i) => i.json || {});
-  const contextData = $('Evaluate Eligibility').first().json;
-  return [{ json: prepareTicketAction({ contextData, existingTickets }) }];
+  return (() => {
+    const existingTickets = $input.all().map((i) => i.json || {});
+    let contextData;
+    try {
+      contextData = $('Evaluate Eligibility').first().json;
+    } catch (e) {
+      contextData = null;
+    }
+    if (!contextData || !contextData.email_id) contextData = $('Validate Classification').first().json;
+    return [{ json: prepareTicketAction({ contextData, existingTickets }) }];
+  })();
 }
