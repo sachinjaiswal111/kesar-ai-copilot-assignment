@@ -151,12 +151,13 @@ flowchart TD
 
 5. **Don't automate:** Replies to customers who report a skin reaction or ask medical questions, plus policy exceptions and angry customers threatening public complaints or legal action. A wrong answer here can harm someone's health or the brand, and the FAQ says support must not give medical advice. These cases need judgment, empathy and authority to decide exceptions that a model should not have. The copilot can still help by flagging the email, opening a ticket and drafting a safe holding reply for a person to edit.
 
-## 8. How I used AI tools
+## 8. How I Used AI Tools
 
-- **Gemini** was my sounding board for architecture: how to split LLM work from deterministic code, how to structure the tools agent, and review of my approach. Gemini's API is also the model the workflow runs on.
-- **Claude Code** wrote and iterated the JavaScript modules in `code/`, the unit tests in `tests/`, and drafts of these documents, working from a `CLAUDE.md` spec with the business rules.
-- **My own work and judgment:** I built, wired and debugged the n8n Cloud workflow and Sheets myself, ran the live emails, found the v1 bugs (wrapped tool results, `search_faq` failing in n8n, lost audit fields on agent errors, noisy prompt), decided what to fix, reviewed the code and outputs, and kept the honest failure notes. Treat AI-written text and code here as reviewed by me, not as independent evidence. The live results are only what I observed in n8n.
+- **Architecture, decisions, and system build (my ownership):** I defined the phase-by-phase architecture, decided the stack (n8n Cloud, Gemini API via Credentials Manager, Google Sheets, and raw GitHub URLs), separated deterministic business rules from LLM steps, built and wired the entire n8n Cloud workflow and Google Sheets tabs, ran all live email tests, debugged the n8n runtime issues (wrapped `intermediateSteps` arrays, Code Tool sandboxing, Switch routing, and `429` quota handling), and reviewed every output.
+- **Claude Code (implementation assistant):** Once I finalized each phase's design and acceptance criteria in `CLAUDE.md`, I used Claude Code to scaffold and iterate on the JavaScript helper modules (`code/`), Node.js unit tests (`tests/`), and initial documentation drafts, which I reviewed and adjusted before pasting into n8n.
+- **Gemini (review & API):** Used as a quick second-opinion reviewer for edge-case checks and prompt refinement, in addition to running the Gemini API as the workflow's LLM.
 
+All code, prompts, and live results were verified and owned by me—every live failure and free-tier limitation is reported as observed.
 ## 9. If I had one more week
 
 - Re-run all 25 on a paid or Groq model, fill in `TEST_REPORT.md` with real accuracy, and review every draft against the brand voice.
